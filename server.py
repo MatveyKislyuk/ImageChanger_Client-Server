@@ -1,85 +1,112 @@
 import socket
-import tkinter
-import webbrowser
-from tkinter import *
-import threading
+import tkinter as tk
+from threading import Thread
 from PIL import Image, ImageTk
+from itertools import cycle
+import os
+import sys
 
-def socket_thread():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((socket.gethostbyname(socket.gethostname()), 12345))
-    print(socket.gethostbyname(socket.gethostname()), 'Сервер запущен')
-    server.listen()
-    flag = 1
+class ImageChangerServer:
+    def __init__(self, port):
+        self.root = tk.Tk()
+        self.root.title("Сервер")
+        self.root.geometry("600x720")
+        self.root.configure(bg='#E1D6F2')
+        self.root.resizable(width=False, height=False)
 
-    while True:
-        user, adres = server.accept()
+        self.ip_label = tk.Label(self.root, text=f"Сервер IP: {self.get_server_ip()}", bd=1, relief="solid", height=2, width=25, font=("Arial", 14), bg='#F6F1FE')
+        self.ip_label.pack(pady=20)
 
-        while True:
-            data = user.recv(1024).decode("utf-8").lower()
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        self.image_paths = cycle([os.path.join(base_path, "images/1.jpg"), os.path.join(base_path, "images/2.jpg"), os.path.join(base_path, "images/3.jpg"), os.path.join(base_path, "images/4.jpg"), os.path.join(base_path, "images/5.jpg")])
+        self.current_image_path = next(self.image_paths)
 
-            if data == "button":
-                print("Соединение установлено!")
-                message = "OK"
-                user.send(message.encode("utf-8"))
-            if data == "youtube":
-                image_path1 = 'images/1.jpg'
-                image_path2 = 'images/2.jpg'
-                image_path3 = 'images/3.jpg'
-                image1 = Image.open(image_path1)
-                image2 = Image.open(image_path2)
-                image3 = Image.open(image_path3)
-                photo1 = ImageTk.PhotoImage(image1)
-                photo2 = ImageTk.PhotoImage(image2)
-                photo3 = ImageTk.PhotoImage(image3)
-                if flag == 1:
-                    label.config(image=photo2)
-                    flag = 2
-                elif flag == 2:
-                    label.config(image=photo3)
-                    flag = 3
-                else:
-                    label.config(image=photo1)
-                    flag = 1
+        self.image_label = tk.Label(self.root)
+        self.image_label.pack(pady=0)
 
+        self.load_and_display_image()
 
-def main_thread():
-    global label
-    root = Tk()
-    root['bg'] = '#7f7679'
-    root.title('Сервер')
-    root.wm_attributes('-alpha', 0.95)
-    root.geometry('600x600')
-    root.resizable(width=False, height=False)
+        self.server_socket = None
+        self.accept_thread = None
+        self.server_running = False
 
-    canvas = Canvas(root, height=600, width=600)
-    canvas.pack()
+        self.start_button = tk.Button(self.root, text="Запуск сервера", height=2, width=21, bg='#BDAED2', font=("Arial", 14, "bold"), command=self.start_server)
+        self.start_button.pack(pady=15)
 
-    frame = Frame(root, bg='#828282')
-    frame.place(relx=0.025, rely=0.025, relwidth=0.95, relheight=0.95)
+        self.stop_button = tk.Button(self.root, text="Остановка сервера", height=2, width=21, bg='#BDAED2', font=("Arial", 14, "bold"), command=self.stop_server, state=tk.DISABLED)
+        self.stop_button.pack(pady=5)
 
-    title = Label(frame, text=socket.gethostbyname(socket.gethostname()), bg='white', font=40)
-    title.pack()
+        # Обработка события закрытия окна
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    frame2 = Frame(frame, bg='black')
-    frame2.place(relx=0.136, rely=0.136, relwidth=0.73, relheight=0.73)
+    def get_server_ip(self):
+        return socket.gethostbyname(socket.gethostname())
 
-    frame3 = Frame(frame, bg='white')
-    frame3.place(relx=0.15, rely=0.15, relwidth=0.70, relheight=0.70)
+    def accept_connections(self):
+        while self.server_running:
+            user, address = self.server_socket.accept()
+            print(f"Cоединение с {address}")
+            user_thread = Thread(target=self.handle_user, args=(user,))
+            user_thread.start()
 
-    image_path = 'images/1.jpg'
-    image = Image.open(image_path)
-    photo = ImageTk.PhotoImage(image)
+    def handle_user(self, user):
+        while self.server_running:
+            try:
+                data = user.recv(1024).decode("utf-8").lower()
+                if data == "change_image":
+                    self.change_image()
+            except Exception as e:
+                print(f"Error handling user: {e}")
+                break
 
-    label = Label(frame3, image=photo)
-    label.image = photo  # нужно для изменения размера окна
-    label.pack()
+    def load_and_display_image(self):
+        try:
+            image = Image.open(self.current_image_path)
+            image = image.resize((500, 450))
+            photo = ImageTk.PhotoImage(image)
+            self.image_label.config(image=photo)
+            self.image_label.image = photo
+        except Exception as e:
+            print(f"Error loading and displaying image: {e}")
 
-    root.mainloop()
+    def change_image(self):
+        try:
+            self.current_image_path = next(self.image_paths)
+            self.load_and_display_image()
+        except Exception as e:
+            print(f"Error changing image: {e}")
 
+    def on_closing(self):
+        self.stop_server()
+        self.root.destroy()
 
-socket_thread = threading.Thread(target=socket_thread)
-main_thread = threading.Thread(target=main_thread)
+    def start_server(self):
+        if not self.server_running:
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.bind((self.get_server_ip(), 12345))
+            self.server_socket.listen()
 
-socket_thread.start()
-main_thread.start()
+            self.server_running = True
+            self.accept_thread = Thread(target=self.accept_connections)
+            self.accept_thread.start()
+
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.NORMAL)
+
+    def stop_server(self):
+        if self.server_running:
+            self.server_running = False
+            if self.server_socket:
+                self.server_socket.close()
+            if self.accept_thread:
+                self.accept_thread.join()
+
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED)
+
+    def run(self):
+        self.root.mainloop()
+
+if __name__ == "__main__":
+    server = ImageChangerServer(12345)
+    server.run()
